@@ -193,7 +193,8 @@ graph TD
     E --> F[Track progress and retry if needed]
     F --> G{All chunks uploaded?}
     G -- Yes --> H[Call COMPLETE API with action=complete, uploadId, objectName]
-    G -- No --> D H --> I[Upload Completed Successfully]  
+    G -- No --> D
+    H --> I[Upload Completed Successfully]
 ```  
 
   
