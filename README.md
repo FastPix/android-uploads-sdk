@@ -1,76 +1,67 @@
-# 📦 FastPixUploader SDK (Android)
+# FastPixUploader SDK (Android)
 
-The **FastPixUploader SDK** is a robust Android library designed for chunked file uploads using
-signed URLs. It simplifies large file uploads by splitting files into smaller chunks, ensuring
-smooth and reliable transfers with built-in retry and progress tracking mechanisms.
-  
----  
+The **FastPixUploader SDK** is a robust Android library designed for chunked file uploads using signed URLs. It simplifies large file uploads by splitting files into smaller chunks, ensuring smooth and reliable transfers with built-in retry and progress tracking mechanisms.
 
-## 🚀 Features
+# Features:
 
-- Chunked uploads for large files
-- Resumable uploads
-- Customizable chunk size and retry strategy
-- Upload lifecycle callbacks
-- Network state awareness
-- Pause, resume and abort support
+- **Chunking:** Files are automatically split into chunks (configurable, default size is 16MB/chunk).
+- **Pause and Resume:** Allows temporarily pausing the upload and resuming after a while.
+- **Retry:** Uploads might fail due to temporary network failures. Individual chunks are retried for 5 times with exponential backoff to recover automatically from such failures.
+- **Lifecycle Event Listeners:** Listen to various upload lifecycle events to provide real-time feedback to users.
+- **Error Handling and Reporting:** Comprehensive error handling to manage upload failures gracefully and inform users of issues.
+- **Customizability:** Developers can customize the chunk size and retry attempts based on their specific needs and network conditions.
 
----  
+# Prerequisites:
 
-## 🛠 Requirements
-
+## Getting started with FastPix:
 - Android 5.0 (API 21) or above
 - Kotlin project (Java-compatible via interfaces)
-- A `File` and a `signed upload URL`. [How to get a Singed Url?](https://docs.fastpix.io/docs/get-started-in-5-minutes#step-2-get-an-api-access-token-from-the-dashboard)
+- To get started with SDK, you will need a signed URL.
+- To make API requests, you'll need a valid **Access Token** and **Secret Key**. See the [Basic Authentication Guide](https://docs.fastpix.io/docs/basic-authentication) for details on retrieving these credentials.
+- Once you have your credentials, use the [Upload media from device](https://docs.fastpix.io/reference/direct-upload-video-media) API to generate a signed URL for uploading media.
 
----  
+## Installation:
 
-## 📦 Installation
+Add the SDK module to your project and include it as a dependency if distributed as an module.
 
-Add the SDK module to your project and include it as a dependency if distributed as an `.aar` or
-module.
-
-- Download the .aar file
-- Place it in your project's libs folder
 - Add to your app's build.gradle:
 
 ```groovy
 dependencies {
-    implementation("io.fastpix.uploads:x.x.x")
+    implementation("io.fastpix.upload:x.x.x") //latest version 1.0.1
 }
 ```
+## Basic Usage
 
-  
----  
+## Import
 
-## ⚙️ Initialization
+```kotlin
+package io.fastpix.uploadsdk
+```  
+
+## Integration
 
 ```kotlin  
 val sdk = FastPixUploadSdk.Builder(this)
     .setFile(file)
     .setSignedUrl(_signedUrl.orEmpty())
     .setChunkSize(16 * 1024 * 1024) // Chunk Size in Byte
-    .setMaxRetries(2000) // In Milliseconds
+    .setMaxRetries(3) 
     .callback(new object : FastPixUploadCallbacks {
         override fun onProgressUpdate(progress: Double) {
-          // Called periodically to report upload progress (0.0 - 100.0)
-          // Example: update a progress bar
+             /* ... */
         }
         override fun onPauseUploading() {
-          // Called when the upload completes successfully
-          // timiMillis indicates how long the upload took
+            // Handle Pause State
         }
         override fun onResumeUploading() {
-          // Called when the upload resumes after being paused
-          // Use this to resume UI indicators or timers
+            // Handle Resume State
         }
         override fun onAbort() {
-          // Called when the upload is manually aborted
-          // Use this to clean up UI or notify the user
+            // Handle Abort State
         }
         override fun onUploadInit() {
-          // Called when the upload process is initialized
-          // Use this to show an initial loading state or setup UI
+            // Handle Abort State
         }
         override fun onChunkHanlded(
             totalChunks: Int,
@@ -78,11 +69,7 @@ val sdk = FastPixUploadSdk.Builder(this)
             currentChunk: Int,
             currentChunkSizeInBytes: Long
         ) {
-          // Called after a chunk is successfully uploaded
-          // totalChunks: total number of chunks to upload
-          // filSizeInBytes: total file size
-          // currentChunk: index of the currently uploaded chunk
-          // currentChunkSizeInBytes: size of the uploaded chunk
+            // Update the UI according chunk data
         }
         override fun onSuccess(timiMillis: Long) {
             // Time to complete the Upload Process
@@ -92,19 +79,15 @@ val sdk = FastPixUploadSdk.Builder(this)
             chunkCount: Int,
             chunkSize: Int
         ) {
-          // Called when a chunk fails to upload after retry attempts
-          // failedChunkRetries: number of retries attempted for the chunk
-          // chunkCount: index of the failed chunk
-          // chunkSize: size of the failed chunk
+            // Handle Chunk Upload Failure
         }
         override fun onError(error: String, timeMillis: Long) {
-          // Called when the upload is paused
-          // Use this to reflect paused state in UI
+            // Handle error message
         }
         override fun onNetworkStateChanged(isOnline: Boolean) {
-          // Called when the network connectivity changes
-          // isOnline indicates whether the device is currently online or offline
+            // Handle Network Changes
         }
+
     })
     .setRetryDelay(2000) // Retry Delay  
     .build()
@@ -112,29 +95,46 @@ val sdk = FastPixUploadSdk.Builder(this)
 sdk.startUpload()
 ```  
 
+## Managing Uploads
+
+You can control the upload lifecycle with the following methods:
+
+- **Pause an Upload:**
+
+  ```kotlin
+  sdk.pauseUpload() // Pauses the current upload
+  ```
+
+- **Resume an Upload:**
+
+  ```kotlin
+  sdk.resumeUpload() // Resume the current upload
+  ```
+
+- **Abort an Upload:**
+
+  ```kotlin
+  sdk.abort(); // Abort the current upload
+
   
 ---  
 
-## 📁 Chunk Size Configuration
+## Parameters Accepted
 
-- **Default**: 16MB (16384 KB)
-- **Min**: 5MB (5120 KB)
-- **Max**: 500MB (512000 KB)
+The upload function accepts the following parameters:
 
----  
-
-## 🔁 Retry
-
-Set retry delay in milliseconds if a chunk upload fails:
-
-```kotlin  
-retryDelayMs = 2000  // 2 seconds between retry attempts  
-```  
+| Name                | Type                                | Required | Description                                                                                                                                                   |
+| ------------------- | ----------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `endpoint`          | `string` or `() => Promise<string>` | Required | The signed URL endpoint where the file will be uploaded. Can be a static string or a function returning a `Promise` that resolves to the upload URL.          |
+| `file`              | `File` or `Object`                  | Required | The file object to be uploaded. Typically a `File` retrieved from an `<input type="file" />` element, but can also be a generic object representing the file. |
+| `chunkSize`         | `number` (in KB)                    | Optional | Size of each chunk in kilobytes. Default is `16384` KB (16 MB).<br>**Minimum:** 5120 KB (5 MB), **Maximum:** 512000 KB (500 MB).                              |
+| `maxFileBytesKB`       | `number` (in KB)                    | Optional | Maximum allowed file size for upload, specified in kilobytes. Files exceeding this limit will be rejected.                                                    |
+| `maxRetryAttempt` | `number`                            | Optional | Number of retry attempts per chunk in case of failure. Default is `5`.                                                                                        |                                    
 
   
 ---  
 
-## 📡 Callbacks
+## Callbacks
 
 Implement `FastPixUploadCallback` to handle various upload events:
 
@@ -151,70 +151,14 @@ Implement `FastPixUploadCallback` to handle various upload events:
   
 ---  
 
-## ⎯ Upload Controls
 
-The SDK supports pausing, resuming, and aborting uploads at any time.
+# References 
 
-| Method                | Description                               |  
-|-----------------------|-------------------------------------------|
-| `onPauseUploading()`  | Triggered when upload is paused           |
-| `onResumeUploading()` | Triggered when upload resumes             |
-| `onAbort()`           | Triggered when upload is manually aborted |
+- [Homepage](https://www.fastpix.io/)
+- [Dashboard](https://dashboard.fastpix.io/login?redirect=https://dashboard.fastpix.io/)
+- [GitHub](https://github.com/FastPix/Android-Uploads.git)
+- [API Reference](https://docs.fastpix.io/reference/on-demand-overview)
 
-## ⎯ Common Errors
-Following custom exceptions are build to handle the SDK exceptions. Upload Exception is the parent of all.
+# Detailed Usage:
 
-| Method                       | Description                                                             |  
-|------------------------------|-------------------------------------------------------------------------|
-| `FileNotFoundException`      | File not found or inaccessible and Check file permissions and existence |
-| `ChunkSizeException`         | Chunk size should be between 5mns                                       |
-| `FileNotReadableException`   | File is not readable.                                                   |
-| `FileContentEmptyException`  | File content is empty                                                   |
-| `SignedUrlNotFoundException` | Signed is empty or null.                                                |
-
-### 🔧 Control Methods
-
-```
-sdk.pauseUpload()     // Pauses upload
-sdk.resumeUpload()    // Resumes paused upload
-sdk.abortUpload()     // Aborts the upload completely
-```
-
-----------
-
-## 🔁 Upload Flow
-
-```mermaid  
-graph TD
-    A[Initialize SDK with file & signed URL] --> B[Call INIT API with action=init, signedUrl, partitions]
-    B --> C[Receive uploadId, objectName, signed URLs]
-    C --> D[Start uploading chunks sequentially]
-    D --> E[Upload chunk to corresponding signed URL]
-    E --> F[Track progress and retry if needed]
-    F --> G{All chunks uploaded?}
-    G -- Yes --> H[Call COMPLETE API with action=complete, uploadId, objectName]
-    G -- No --> D
-    H --> I[Upload Completed Successfully]
-```  
-
-  
----  
-
-## ⚠️ Common Issues
-
-- **High Memory Usage**:  
-  Avoid allocating the entire file in memory, especially for large files (>1GB). The SDK is
-  optimized to read and upload only the required chunk range.
-
-- **Upload Failures Due to Invalid URLs**:  
-  Ensure that the signed URLs provided for each chunk are valid and have not expired.
-
-- **Interrupted Uploads on Network Change**:  
-  Monitor connectivity using the `onNetworkStateChange()` callback to handle network interruptions
-  gracefully and improve upload reliability.
-
----  
-
-## 📫 Support
-
-For bugs, issues or feedback, please contact [support@fastpix.io](mailto:support@fastpix.io)
+For more detailed steps and advanced usage, please refer to the official [FastPix Documentation](https://docs.fastpix.io/docs/upload-sdk-for-android).

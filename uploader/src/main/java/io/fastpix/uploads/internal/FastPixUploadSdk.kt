@@ -1,6 +1,7 @@
 package io.fastpix.uploads.internal
 
 import android.content.Context
+import android.util.Log
 import io.fastpix.uploads.ChunkSizeException
 import io.fastpix.uploads.FileContentEmptyException
 import io.fastpix.uploads.FileNotFoundException
@@ -13,14 +14,11 @@ import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.logging.HttpLoggingInterceptor
-import org.json.JSONException
-import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.util.Calendar
 import java.util.concurrent.TimeUnit
 import kotlin.math.ceil
 
@@ -39,9 +37,7 @@ class FastPixUploadSdk private constructor(
     private var isPause = false
     private var isAborted = false
     private var isOnlyChunk = false
-    private var _uploadSignedUrls = arrayListOf<String>() // SignedUrl here
-    private var _uploadId: String? = null
-    private var _objectName: String? = null
+
     private var chunkOffset = 0L
     private var successiveChunkCount = 0L
     private var failedChunkRetries = 0
@@ -50,20 +46,20 @@ class FastPixUploadSdk private constructor(
     private var startTime = 0L
     private var uploadCall: Call? = null // Api call reference for uploading
     private val okHttpClient: OkHttpClient = createOkHttpClient() // Api Client
+    private val maxDelayMs: Long = 10000
+    private val retryHelper = RetryHelper()
 
 
     /**
      * Api Client with added interceptor for loggin API body
      */
     private fun createOkHttpClient(): OkHttpClient {
-        return OkHttpClient.Builder()
-            .addInterceptor(HttpLoggingInterceptor().apply {
-                level = HttpLoggingInterceptor.Level.BASIC
-            }) // Change to Level.BODY for detailed logs
+        return OkHttpClient.Builder().addInterceptor(HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BASIC
+        }) // Change to Level.BODY for detailed logs
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(120, TimeUnit.SECONDS)
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .build()
+            .connectTimeout(30, TimeUnit.SECONDS).build()
     }
 
     /**
@@ -138,67 +134,20 @@ class FastPixUploadSdk private constructor(
             isOnlyChunk = true
         }
         callback?.onChunkHandled(
-            _totalChunks.toInt(),
-            _file?.length() ?: 0L,
-            chunkCount,
-            getCurrentChunkSize()
+            _totalChunks.toInt(), _file?.length() ?: 0L, chunkCount, getCurrentChunkSize()
         )
         handleNetworkState()
+
         initUploadProcess()
     }
 
     private fun initUploadProcess() {
-        val requestBody = getInitRequestAsString()
-        val request = Request.Builder()
-            .url(Constants.MULTIPART_URL)
-            .post(requestBody)
-            .build()
-        okHttpClient.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                callback?.onError(
-                    e.message ?: Constants.SOMETHING_WENT_WRONG,
-                    getTotalTimeSpentOnProcess()
-                )
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                if (response.isSuccessful) {
-                    callback?.onUploadInit()
-                    handleInitProcessResponse(response)
-                } else {
-                    unregisterSDK();
-                    callback?.onError(response.message, getTotalTimeSpentOnProcess())
-                }
-            }
-        })
-    }
-
-    private fun handleInitProcessResponse(response: Response) {
-        try {
-            val responseAsString = response.body?.string()
-            val jsonObject = JSONObject(responseAsString)
-            val jsonData = jsonObject.getJSONObject("data")
-            val urlsList = jsonData.getJSONArray("uploadUrls")
-            if (!isOnlyChunk) {
-                _uploadId = jsonData.getString("uploadId")
-                _objectName = jsonData.getString("objectName")
-            }
-            for (i in 0 until urlsList.length()) {
-                val url = urlsList.getString(i)
-                _uploadSignedUrls.add(url)
-            }
-            handleChunkStreaming()
-        } catch (ex: JSONException) {
-            callback?.onError(
-                ex.message ?: Constants.SOMETHING_WENT_WRONG,
-                getTotalTimeSpentOnProcess()
-            )
-        }
-
+        callback?.onUploadInit()
+        handleChunkStreaming()
     }
 
     fun getTotalTimeSpentOnProcess(): Long {
-        var totalTime = System.currentTimeMillis() - startTime
+        val totalTime = System.currentTimeMillis() - startTime
         return totalTime
     }
 
@@ -208,8 +157,9 @@ class FastPixUploadSdk private constructor(
         val fileLength = _file?.length() ?: 0L
         val start = nextChunkRangeStart
         val end = minOf(_chunkSize * (chunkOffset + 1), fileLength)
-        val requestBody = StreamingFileRequestBody(
-            file = _file,
+        val contentRange = "bytes $start-${end - 1}/${fileLength}"
+
+        val requestBody = StreamingFileRequestBody(file = _file,
             mediaType = "application/octet-stream".toMediaType(),
             startByte = start,
             endByte = end,
@@ -217,45 +167,52 @@ class FastPixUploadSdk private constructor(
                 val currentUploaded = start + written
                 val progressCount = (currentUploaded * 100) / (_file?.length() ?: 0L)
                 callback?.onProgressUpdate(progressCount.toDouble())
-            }
-        )
+            })
 
         try {
             val request = Request.Builder()
-                .url(_uploadSignedUrls[chunkCount])
-                .put(requestBody)
-                .build()
+                .url(_signedUrl.toString()).addHeader("Content-Range", contentRange)
+                .put(requestBody).build()
             uploadCall = okHttpClient.newCall(request)
             uploadCall?.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
                     callback?.onError(
-                        e.message ?: Constants.SOMETHING_WENT_WRONG,
-                        getTotalTimeSpentOnProcess()
+                        e.message ?: Constants.SOMETHING_WENT_WRONG, getTotalTimeSpentOnProcess()
                     )
                 }
 
                 override fun onResponse(call: Call, response: Response) {
-                    if (response.isSuccessful) {
-                        chunkCount++
-                        successiveChunkCount++
-                        chunkOffset++
-                        nextChunkRangeStart = end
-                        callback?.onChunkHandled(
-                            _totalChunks.toInt(),
-                            _file?.length() ?: 0L,
-                            chunkCount,
-                            getCurrentChunkSize()
-                        )
-                        validateUploadStatus()
+                    if (response.isSuccessful || response.code == 308) {
+                        val rangeHeader = response.header("Range")
+                        if (response.code == 308 && !rangeHeader.equals("bytes=0-${end - 1}")) {
+                            handleChunkUploadFailure(response.message)
+                            Log.e("statusCode", "yes");
+                        } else {
+                            if (retryHelper != null) {
+                                retryHelper.cancel()
+                            }
+                            failedChunkRetries = 0
+                            Log.e("statusCode", "No");
+                            chunkCount++
+                            successiveChunkCount++
+                            chunkOffset++
+                            nextChunkRangeStart = end
+                            callback?.onChunkHandled(
+                                _totalChunks.toInt(),
+                                _file?.length() ?: 0L,
+                                chunkCount,
+                                getCurrentChunkSize()
+                            )
+                            validateUploadStatus()
+                        }
                     } else {
                         handleChunkUploadFailure(response.message)
                     }
                     response.close()
                 }
-
             })
         } catch (ex: Exception) {
-            handleChunkUploadFailure(ex.message.orEmpty())
+//            handleChunkUploadFailure(ex.message.orEmpty())
         }
     }
 
@@ -266,8 +223,7 @@ class FastPixUploadSdk private constructor(
     }
 
     fun abort() {
-        if (uploadCall != null)
-            uploadCall?.cancel()
+        if (uploadCall != null) uploadCall?.cancel()
         unregisterSDK()
         callback?.onAbort()
     }
@@ -277,12 +233,8 @@ class FastPixUploadSdk private constructor(
      */
     private fun validateUploadStatus() {
         if (_totalChunks.toLong() == successiveChunkCount) {
-            if (!isOnlyChunk) {
-                acknowledgeServerAboutDataCompletion()
-            } else {
-                callback?.onSuccess(getTotalTimeSpentOnProcess())
-                unregisterSDK()
-            }
+            callback?.onSuccess(getTotalTimeSpentOnProcess())
+            unregisterSDK()
         } else {
             handleChunkStreaming()
         }
@@ -293,12 +245,8 @@ class FastPixUploadSdk private constructor(
      * @param message, Error message
      */
     private fun handleChunkUploadFailure(message: String) {
-        if (!isPause
-            && !isOffline
-            && !isAborted
-            && _uploadSignedUrls.isNotEmpty()
-            && _totalChunks > 0
-            && (failedChunkRetries < maxRetries)
+        if (!isPause && !isOffline && !isAborted
+            && _totalChunks > 0 && (failedChunkRetries < maxRetries)
         ) {
             retryChunkUploading()
         } else {
@@ -311,30 +259,21 @@ class FastPixUploadSdk private constructor(
      * Retry the failed chunk
      */
     private fun retryChunkUploading() {
-        RetryHelper().runAfterDelay(retryDelay) {
+        val delay = (Math.pow(2.0, failedChunkRetries.toDouble()) * retryDelay).toLong()
+        val jitter = (Math.random() * retryDelay).toLong()
+        val brackOff = minOf(delay + jitter, maxDelayMs)
+        Log.e(
+            "timeStamp",
+            Calendar.getInstance().time.toString() + " " + brackOff + " " + failedChunkRetries
+        )
+        retryHelper.runAfterDelay(brackOff) {
             failedChunkRetries++
             callback?.onChunkUploadingFailed(
-                failedChunkRetries,
-                chunkCount,
-                getCurrentChunkSize()
+                failedChunkRetries, chunkCount, getCurrentChunkSize()
             )
             handleChunkStreaming()
         }
-    }
 
-    /**
-     * Creates Process Initialization Request
-     * @param action: init
-     * @param signedUrl: signed url
-     * @param partitions: total chunks
-     */
-    private fun getInitRequestAsString(): RequestBody {
-        val mediaType = "application/json; charset=UTF-8".toMediaType()
-        val jsonRequest = JSONObject();
-        jsonRequest.put("action", "init")
-        jsonRequest.put("signedUrl", _signedUrl)
-        jsonRequest.put("partitions", _totalChunks)
-        return jsonRequest.toString().toRequestBody(mediaType)
     }
 
     /**
@@ -353,11 +292,7 @@ class FastPixUploadSdk private constructor(
      * Resumes the uploading process
      */
     fun resumeUploading() {
-        if (isPause
-            && !isOffline
-            && !isAborted
-            && (_totalChunks.toLong() != successiveChunkCount)
-        ) {
+        if (isPause && !isOffline && !isAborted && (_totalChunks.toLong() != successiveChunkCount)) {
             isPause = false
             handleChunkStreaming()
         }
@@ -373,48 +308,11 @@ class FastPixUploadSdk private constructor(
         isOnlyChunk = false
         chunkOffset = 0
         successiveChunkCount = 0
-        _uploadSignedUrls.clear()
         _totalChunks = 0.0
         failedChunkRetries = 0
         isOffline = false
         isPause = false
         isAborted = false
-        failedChunkRetries = 0
-    }
-
-    /**
-     *  Acknowledges the server about the data completion
-     */
-    private fun acknowledgeServerAboutDataCompletion() {
-        val mediaType = Constants.MEDIA_TYPE.toMediaType()
-        val jsonRequest = JSONObject()
-        jsonRequest.put("action", "complete")
-        jsonRequest.put("uploadId", _uploadId)
-        jsonRequest.put("objectName", _objectName)
-        val requestBody = jsonRequest.toString().toRequestBody(mediaType)
-        val request = Request.Builder()
-            .url(Constants.MULTIPART_URL)
-            .post(requestBody)
-            .build()
-        okHttpClient.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                callback?.onError(
-                    e.message ?: Constants.SOMETHING_WENT_WRONG,
-                    getTotalTimeSpentOnProcess()
-                )
-                unregisterSDK()
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                if (response.isSuccessful) {
-                    callback?.onSuccess(getTotalTimeSpentOnProcess())
-                } else {
-                    callback?.onError(response.message, getTotalTimeSpentOnProcess())
-                }
-                unregisterSDK()
-            }
-
-        })
     }
 
     var isFirstTime = true
@@ -433,7 +331,6 @@ class FastPixUploadSdk private constructor(
                     } else {
                         isFirstTime = false
                     }
-
                 }
 
                 override fun onLost() {
@@ -445,4 +342,5 @@ class FastPixUploadSdk private constructor(
                 }
             })
     }
+
 }

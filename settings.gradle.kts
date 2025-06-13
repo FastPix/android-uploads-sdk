@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "My Application"
+rootProject.name = "Uploads Sdk GCP"
 include(":app")
 include(":uploader")
