@@ -65,37 +65,57 @@ Thank you for helping improve the FastPix Node SDK documentation! Please provide
 Here's how the documentation should be written:
 
 ```kotlin
-    private val fastPixDataSDK = FastPixDataSDK()
-    val videoDataDetails = VideoDataDetails(
-        videoId = UUID.randomUUID().toString(),
-        videoTitle = "My Video"
-    ).apply {
-        videoSeries = "Demo Series"
-        videoProducer = "Demo Producer"
-        videoContentType = "VOD"
-        // ..etc
-    }
-    // Optional
-    val playerDataDetails = PlayerDataDetails(
-        playerName = "media3",
-        playerVersion = "latest-version"
-    )
-    // Optional
-    val customDataDetails = CustomDataDetails().apply {
-        customField1 = "Custom Value 1"
-        customField2 = "Custom Value 2"
-        // ..etc
-    }
-    
-    fastPixDataSDK = FastPixBaseMedia3Player(
-        context = this,
-        playerView = binding.playerView,
-        exoPlayer = exoPlayer,
-        workSpaceId = "workspace-key",
-        playerDataDetails = playerDataDetails,
-        videoDataDetails = videoDataDetails,
-        customDataDetails = customDataDetails
-    )
+    val sdk = FastPixUploadSdk.Builder(this)
+    .setFile(file)
+    .setSignedUrl(_signedUrl.orEmpty())
+    .setChunkSize(16 * 1024 * 1024) // Chunk Size in Byte
+    .setMaxRetries(3) 
+    .callback(new object : FastPixUploadCallbacks {
+        override fun onProgressUpdate(progress: Double) {
+             /* ... */
+        }
+        override fun onPauseUploading() {
+            // Handle Pause State
+        }
+        override fun onResumeUploading() {
+            // Handle Resume State
+        }
+        override fun onAbort() {
+            // Handle Abort State
+        }
+        override fun onUploadInit() {
+            // Handle Abort State
+        }
+        override fun onChunkHanlded(
+            totalChunks: Int,
+            fileSizeInBytes: Long,
+            currentChunk: Int,
+            currentChunkSizeInBytes: Long
+        ) {
+            // Update the UI according chunk data
+        }
+        override fun onSuccess(timiMillis: Long) {
+            // Time to complete the Upload Process
+        }
+        override fun onChunkUploadingFailed(
+            failedChunkRetries: Int,
+            chunkCount: Int,
+            chunkSize: Int
+        ) {
+            // Handle Chunk Upload Failure
+        }
+        override fun onError(error: String, timeMillis: Long) {
+            // Handle error message
+        }
+        override fun onNetworkStateChanged(isOnline: Boolean) {
+            // Handle Network Changes
+        }
+
+    })
+    .setRetryDelay(2000) // Retry Delay  
+    .build()
+// Starts the Uploading Process
+sdk.startUpload()
 ```
 
 ## Additional Context
