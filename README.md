@@ -114,6 +114,6 @@ The 1.x `FastPixUploadSdk` / `FastPixUploadCallbacks` / `UploadExceptions` API h
 
 - [Homepage](https://www.fastpix.com/)
 - [Dashboard](https://dashboard.fastpix.com/)
-- [GitHub](https://github.com/FastPix/Android-Uploads.git)
-- [API Reference](https://docs.fastpix.com/reference/on-demand-overview)
+- [GitHub](https://github.com/FastPix/android-uploads-sdk)
+- [API Reference](https://fastpix.com/docs/upload-videos/upload-videos-from-device)
 - [GCS resumable upload protocol](https://cloud.google.com/storage/docs/performing-resumable-uploads)
