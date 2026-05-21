@@ -65,7 +65,7 @@ publishing {
         create<MavenPublication>("bar") {
             groupId = "io.fastpix"
             artifactId = "uploads"
-            version = "1.0.1"
+            version = "2.0.0"
             artifact("${buildDir}/outputs/aar/uploader-release.aar")
 
             pom.withXml {

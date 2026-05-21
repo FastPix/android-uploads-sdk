@@ -1,164 +1,119 @@
 # FastPixUploader SDK (Android)
 
-The **FastPixUploader SDK** is a robust Android library designed for chunked file uploads using signed URLs. It simplifies large file uploads by splitting files into smaller chunks, ensuring smooth and reliable transfers with built-in retry and progress tracking mechanisms.
+A production-grade Android library for resumable file uploads to Google Cloud Storage signed session URIs, implementing the full [GCS resumable upload protocol](https://cloud.google.com/storage/docs/performing-resumable-uploads): chunked PUTs with `Content-Range`, server-authoritative resume via `308 Resume Incomplete` + `Range` parsing, automatic status-query (`bytes */TOTAL`) on every resume path, and retry with exponential backoff for transient failures.
 
-# Features:
+## Features
 
-- **Chunking:** Files are automatically split into chunks (configurable, default size is 16MB/chunk).
-- **Pause and Resume:** Allows temporarily pausing the upload and resuming after a while.
-- **Retry:** Uploads might fail due to temporary network failures. Individual chunks are retried for 5 times with exponential backoff to recover automatically from such failures.
-- **Lifecycle Event Listeners:** Listen to various upload lifecycle events to provide real-time feedback to users.
-- **Error Handling and Reporting:** Comprehensive error handling to manage upload failures gracefully and inform users of issues.
-- **Customizability:** Developers can customize the chunk size and retry attempts based on their specific needs and network conditions.
+- **Spec-compliant resumable uploads.** Each non-final chunk is a 256 KiB multiple, sent with `Content-Range: bytes start-end/total`. The engine never assumes how much the server has — every resume path issues a status-query PUT first and trusts the server's `Range` header.
+- **Explicit upload state machine.** Single enum (`UploadState`) with validated transitions. No boolean soup, no resurrection of terminal sessions.
+- **Single-threaded engine.** All state mutations happen on one serial executor. OkHttp callbacks, network-change events, and consumer commands all funnel through it, so there are no races.
+- **Smooth, monotonic progress.** Updates fire continuously as each chunk streams (not only at chunk boundaries), throttled to one event per integer-percent change so a 1 GB upload emits ~100 events regardless of chunk size. A `CAS`-guarded high-water mark ensures progress never regresses on retry, even when a chunk fails mid-flight.
+- **Resilient cancellation.** Generation-counted in-flight calls absorb late OkHttp callbacks; intentional cancels never leak as `onFailure`.
+- **Pause / resume / cancel** with correct lifecycle callbacks.
+- **Configurable retry.** Exponential backoff with full jitter, bounded by max delay and max attempts. Distinguishes retryable (408/429/5xx) from fatal (other 4xx, 410 Gone → session expired).
+- **Main-thread callbacks by default.** Listener calls land on the main looper unless you supply a different `Executor`.
+- **Multi-transport network awareness.** Tracks every connected network with INTERNET capability; treats the device as online so long as at least one transport (WiFi *or* cellular) is up. Transient losses during WiFi/cellular handover don't trip a false `NETWORK_LOST`.
 
-# Prerequisites:
+## Prerequisites
 
-## Getting started with FastPix:
-- Android 5.0 (API 21) or above
-- Kotlin project (Java-compatible via interfaces)
-- To get started with SDK, you will need a signed URL.
-- To make API requests, you'll need a valid **Access Token** and **Secret Key**. See the [Basic Authentication Guide](https://docs.fastpix.io/docs/basic-authentication) for details on retrieving these credentials.
-- Once you have your credentials, use the [Upload media from device](https://docs.fastpix.io/reference/direct-upload-video-media) API to generate a signed URL for uploading media.
+- Android 7.0 (API 24) or above
+- Kotlin
+- A resumable session URI obtained from a `POST .../o?uploadType=resumable&x-goog-resumable=start` (or the equivalent signed URL flow). See FastPix's [Direct Upload API](https://docs.fastpix.com/reference/direct-upload-video-media) for credential setup.
 
-## Installation:
-
-Add the SDK module to your project and include it as a dependency if distributed as an module.
-
-- Add to your app's build.gradle:
-
-```groovy
-dependencies {
-    implementation("io.fastpix.upload:x.x.x") //latest version 1.0.1
-}
-```
-## Basic Usage
-
-## Import
+## Installation
 
 ```kotlin
-package io.fastpix.uploadsdk
-```  
+dependencies {
+    implementation("io.fastpix:uploads:2.0.0")
+}
+```
 
-## Integration
+## Usage
 
-```kotlin  
-val sdk = FastPixUploadSdk.Builder(this)
-    .setFile(file)
-    .setSignedUrl(_signedUrl.orEmpty())
-    .setChunkSize(16 * 1024 * 1024) // Chunk Size in Byte
-    .setMaxRetries(3) 
-    .callback(new object : FastPixUploadCallbacks {
-        override fun onProgressUpdate(progress: Double) {
-             /* ... */
-        }
-        override fun onPauseUploading() {
-            // Handle Pause State
-        }
-        override fun onResumeUploading() {
-            // Handle Resume State
-        }
-        override fun onAbort() {
-            // Handle Abort State
-        }
-        override fun onUploadInit() {
-            // Handle Abort State
-        }
-        override fun onChunkHanlded(
-            totalChunks: Int,
-            fileSizeInBytes: Long,
-            currentChunk: Int,
-            currentChunkSizeInBytes: Long
-        ) {
-            // Update the UI according chunk data
-        }
-        override fun onSuccess(timiMillis: Long) {
-            // Time to complete the Upload Process
-        }
-        override fun onChunkUploadingFailed(
-            failedChunkRetries: Int,
-            chunkCount: Int,
-            chunkSize: Int
-        ) {
-            // Handle Chunk Upload Failure
-        }
-        override fun onError(error: String, timeMillis: Long) {
-            // Handle error message
-        }
-        override fun onNetworkStateChanged(isOnline: Boolean) {
-            // Handle Network Changes
-        }
-
+```kotlin
+val uploader = FastPixUploader.Builder(context)
+    .file(localFile)
+    .sessionUri(gcsResumableSessionUri)
+    .chunkSize(8L * 1024 * 1024)      // 8 MiB; must be a multiple of 256 KiB
+    .maxRetries(5)
+    .retryBaseDelay(2_000L)
+    .retryMaxDelay(30_000L)
+    .listener(object : UploadListener {
+        override fun onStateChange(state: UploadState) { /* drive UI */ }
+        override fun onProgress(bytesUploaded: Long, totalBytes: Long, percentage: Double) { /* … */ }
+        override fun onPrepared(totalChunks: Int, totalBytes: Long, chunkSize: Long) { /* … */ }
+        override fun onChunkUploaded(chunkIndex: Int, totalChunks: Int, bytesAcked: Long) { /* … */ }
+        override fun onRetryScheduled(attempt: Int, delayMillis: Long, cause: UploadError) { /* … */ }
+        override fun onNetworkStateChange(online: Boolean) { /* … */ }
+        override fun onSuccess(elapsedMillis: Long) { /* done */ }
+        override fun onFailure(error: UploadError, elapsedMillis: Long) { /* terminal */ }
+        override fun onCancelled(elapsedMillis: Long) { /* terminal */ }
     })
-    .setRetryDelay(2000) // Retry Delay  
     .build()
-// Starts the Uploading Process
-sdk.startUpload()
-```  
 
-## Managing Uploads
+uploader.start()
+uploader.pause()
+uploader.resume()
+uploader.cancel()
+```
 
-You can control the upload lifecycle with the following methods:
+Every listener method has a no-op default — you only override what you need.
 
-- **Pause an Upload:**
+## Public API
 
-  ```kotlin
-  sdk.pauseUpload() // Pauses the current upload
-  ```
+### `FastPixUploader.Builder`
 
-- **Resume an Upload:**
+| Method | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `file(File)` | yes | — | Must exist, be readable, non-empty. |
+| `sessionUri(String)` | yes | — | GCS resumable session URI (not a one-shot signed URL). |
+| `chunkSize(Long)` | no | 8 MiB | Bytes. Must be a multiple of 256 KiB, in [5 MiB, 500 MiB]. |
+| `maxRetries(Int)` | no | 5 | Per-failure retry budget. |
+| `retryBaseDelay(Long)` | no | 2000 ms | Initial backoff. |
+| `retryMaxDelay(Long)` | no | 30000 ms | Cap on a single delay regardless of attempt. |
+| `listener(UploadListener)` | no | none | Receives lifecycle events. |
+| `callbackExecutor(Executor)` | no | main looper | Where listener callbacks run. |
+| `debugLogging(Boolean)` | no | false | Installs `HttpLoggingInterceptor` at BASIC level. |
 
-  ```kotlin
-  sdk.resumeUpload() // Resume the current upload
-  ```
+### `UploadState`
 
-- **Abort an Upload:**
+`IDLE → PREPARING → UPLOADING ↔ {PAUSED, RETRYING, NETWORK_LOST, QUERYING_STATUS} → COMPLETED | FAILED | CANCELLED`
 
-  ```kotlin
-  sdk.abort(); // Abort the current upload
+`COMPLETED`, `FAILED`, and `CANCELLED` are terminal — no further callbacks fire.
 
-  
----  
+### `UploadError`
 
-## Parameters Accepted
+Typed, sealed:
+- `InvalidConfiguration`, `FileNotFound`, `FileNotReadable`, `FileEmpty`, `FileReadFailure`
+- `NetworkFailure` — transport error, retries exhausted
+- `SessionExpired` — HTTP 410, the session URI is dead; mint a new one
+- `ClientError(statusCode)` — 4xx other than retryable
+- `ServerError(statusCode)` — 5xx after exhausting retries
+- `RetryLimitExceeded(attempts)`
+- `UnexpectedResponse`
 
-The upload function accepts the following parameters:
+## Migrating from 1.x
 
-| Name                | Type                                | Required | Description                                                                                                                                                   |
-| ------------------- | ----------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `endpoint`          | `string` or `() => Promise<string>` | Required | The signed URL endpoint where the file will be uploaded. Can be a static string or a function returning a `Promise` that resolves to the upload URL.          |
-| `file`              | `File` or `Object`                  | Required | The file object to be uploaded. Typically a `File` retrieved from an `<input type="file" />` element, but can also be a generic object representing the file. |
-| `chunkSize`         | `number` (in KB)                    | Optional | Size of each chunk in kilobytes. Default is `16384` KB (16 MB).<br>**Minimum:** 5120 KB (5 MB), **Maximum:** 512000 KB (500 MB).                              |
-| `maxFileBytesKB`       | `number` (in KB)                    | Optional | Maximum allowed file size for upload, specified in kilobytes. Files exceeding this limit will be rejected.                                                    |
-| `maxRetryAttempt` | `number`                            | Optional | Number of retry attempts per chunk in case of failure. Default is `5`.                                                                                        |                                    
+The 1.x `FastPixUploadSdk` / `FastPixUploadCallbacks` / `UploadExceptions` API has been replaced.
 
-  
----  
+| 1.x | 2.x |
+| --- | --- |
+| `FastPixUploadSdk.Builder` | `FastPixUploader.Builder` |
+| `.setSignedUrl(url)` | `.sessionUri(uri)` (renamed — it's a session URI, not a signed URL) |
+| `.setFile(file)` | `.file(file)` |
+| `.setChunkSize(bytes)` | `.chunkSize(bytes)` (now enforces 256 KiB multiple) |
+| `.setMaxRetries(n)` | `.maxRetries(n)` |
+| `.setRetryDelay(ms)` | `.retryBaseDelay(ms)` + `.retryMaxDelay(ms)` |
+| `.callback(cb)` | `.listener(cb)` |
+| `.build().startUpload()` | `.build().start()` |
+| `pauseUploading()` / `resumeUploading()` / `abort()` | `pause()` / `resume()` / `cancel()` |
+| `FastPixUploadCallbacks` interface | `UploadListener` interface, no-op defaults, typed errors |
+| `UploadExceptions` subclasses | `UploadError` sealed hierarchy |
 
-## Callbacks
+## References
 
-Implement `FastPixUploadCallback` to handle various upload events:
-
-| Method                                                                                                 | Description                                                          |  
-|--------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------|  
-| `onProgressUpdate(progress: Double)`                                                                   | Called with total upload progress (0.0 - 100.0)                      |  
-| `onSuccess(timiMillis: Long)`                                                                          | Called when all chunks are successfully uploaded                     |  
-| `onError(error: String, timeMillis: Long)`                                                             | Called when any fatal error occurs in uploading process              |
-| `onChunkUploadingFailed(failedChunkRetries: Int, chunkCount: Int, chunkSize: Long)`                    | Called when any fatal error occurs when uploading a individual chunk |  
-| `onNetworkStateChange(isOnline: Boolean)`                                                              | Called when device's connectivity status changes                     |  
-| `onUploadInit()`                                                                                       | Called once upload initialization starts                             |  
-| `onChunkHandled(totalChunks:Int,filSizeInBytes:Long,currentChunk:Int,  currentChunkSizeInBytes: Long)` | Provide Information About the Chunks Uploading                       |
-
-  
----  
-
-
-# References 
-
-- [Homepage](https://www.fastpix.io/)
-- [Dashboard](https://dashboard.fastpix.io/login?redirect=https://dashboard.fastpix.io/)
+- [Homepage](https://www.fastpix.com/)
+- [Dashboard](https://dashboard.fastpix.com/)
 - [GitHub](https://github.com/FastPix/Android-Uploads.git)
-- [API Reference](https://docs.fastpix.io/reference/on-demand-overview)
-
-# Detailed Usage:
-
-For more detailed steps and advanced usage, please refer to the official [FastPix Documentation](https://docs.fastpix.io/docs/upload-sdk-for-android).
+- [API Reference](https://docs.fastpix.com/reference/on-demand-overview)
+- [GCS resumable upload protocol](https://cloud.google.com/storage/docs/performing-resumable-uploads)
