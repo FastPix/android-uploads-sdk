@@ -18,7 +18,7 @@ A production-grade Android library for resumable file uploads to Google Cloud St
 
 - Android 7.0 (API 24) or above
 - Kotlin
-- A resumable session URI obtained from a `POST .../o?uploadType=resumable&x-goog-resumable=start` (or the equivalent signed URL flow). See FastPix's [Direct Upload API](https://docs.fastpix.com/reference/direct-upload-video-media) for credential setup.
+- A resumable session URI obtained from a `POST .../o?uploadType=resumable&x-goog-resumable=start` (or the equivalent signed URL flow). See FastPix's [Direct Upload API](https://fastpix.com/docs/getting-started/upload-and-play-your-first-video) for credential setup.
 
 ## Installation
 
