@@ -20,5 +20,7 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Uploads Sdk GCP"
-include(":app")
 include(":uploader")
+include(":examples:kotlin-xml")
+include(":examples:kotlin-compose")
+include(":examples:java-xml")

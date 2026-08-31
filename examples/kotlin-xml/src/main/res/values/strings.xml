@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FastPix Uploads Sample</string>
+
+    <string name="hint_signed_url">Signed upload URL</string>
+    <string name="btn_create_upload">Create upload</string>
+    <string name="btn_pick_file">Pick a file</string>
+    <string name="btn_start_upload">Start upload</string>
+    <string name="btn_pause">Pause</string>
+    <string name="btn_resume">Resume</string>
+    <string name="btn_abort">Abort</string>
+
+    <string name="label_no_file_selected">No file selected</string>
+    <string name="label_progress_zero">0%</string>
+    <string name="label_status_idle">Status: idle</string>
+
+    <string name="error_signed_url_required">Please enter a signed URL</string>
+    <string name="error_file_required">Please pick a file first</string>
+    <string name="error_copy_failed">Could not read the selected file</string>
+</resources>

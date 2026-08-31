@@ -59,6 +59,17 @@ uploader.cancel()
 
 Every listener method has a no-op default — you only override what you need.
 
+## Example apps
+
+The [`examples/`](examples) folder has three runnable sample apps — the same upload flow (background
+upload, pause/resume/cancel, progress notification) in different stacks:
+
+- [`kotlin-xml`](examples/kotlin-xml) — Kotlin with XML views
+- [`kotlin-compose`](examples/kotlin-compose) — Kotlin with Jetpack Compose
+- [`java-xml`](examples/java-xml) — Java with XML views
+
+See [`examples/README.md`](examples/README.md) for setup and how the background upload works.
+
 ## Public API
 
 ### `FastPixUploader.Builder`
